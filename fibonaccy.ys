@@ -1,0 +1,226 @@
+# TKJ-harjoitustyö 2024 Fibonacci
+# Atte Kiviniemi
+#
+# Pohdinta:
+#
+# - Ajonaikaisten käskyjen määrä: noin 72 000, Alkuperäisessä vastauksessa luulin 
+#					       suoritus yhdelle luvulle
+#       
+# - Työssä vaatimuksena oli, että suurin tarkistettava luku on 1000, joka tulee
+#   kertolaskun tarkistettavaksi on sqrt(5*1000*1000+4) ≈ 2236. Valitsin tämän 
+#   perusteella kertolaskussa tarkistettavien bittien määräksi 13, joten suurin 
+#   luku kerrottavaksi tai kertojaksi on 4095.
+#
+# - Lähdin optimoimaan ohjelmaa keskittymällä neliöjuuren parantamiseen, koska 
+#   se oli eniten käskyjä suorittava osa ohjelmaani. 
+#		
+# - Bittisiirron olen optimoinut tehokkaammalla algoritmillä. Bittisiirtoa 
+#   pystyisi vielä optimoimaan paremmin. Esimerkikiksi bittisiirrossa
+#   laskettaessa bit >> 2 kutsun bittisiirtoa bit >> 1 kahdesti, joka ei ole 
+#   varmasti optimaalisin ratkaisu. 
+#
+
+# Tästä alkaa koodi
+main:  
+    irmovq stack, %rsp          
+    irmovq stack, %rbp 
+    irmovq array, %r10 
+ 
+main_loop:
+    irmovq $0, %r9
+    mrmovq (%r10), %rax   
+    subq %r9, %rax              # Tarkista onko arrayn arvo 0, jos on ohjelma päättyy 
+    je end       
+    rrmovq %rax, %rcx           # 
+    call multiply_init 
+    call multiply_five
+    rrmovq %rdx, %r8            # 5*x*x rekisteriin r8
+    rrmovq %r8, %r12
+    irmovq $4, %r14   
+    addq %r14, %r12             # 5*x*x + 4 rekisteriin r12
+    call square_root_init
+    call multiply_init
+    irmovq $4, %r14 
+    addq %r14, %r8              # 5*x*x + 4 rekisteriin %r8 vertailua varten
+    subq %r8, %rbx              
+    je num_is_fibonacci         # Jos r8 ja rbx yhtä suuria, on Fibonacci
+    subq %r14, %r8              # r8 takaisin arvoon 5*x*x
+    rrmovq %r8, %r12            # 5*x*x - 4 rekisteriin r12
+    call square_root_init
+    call multiply_init
+    irmovq $4, %r14 
+    subq %r14, %r8              # 5*x*x - 4 rekisteriin %r8 vertailua varten
+    subq %r8, %rbx
+    je num_is_fibonacci         # Jos r8 ja rbx yhtä suuria, on Fibonacci
+    call end
+
+num_is_fibonacci:
+    irmovq $8, %r8
+    addq %r8, %r10              # Lisää array osoitinta 
+    jmp main_loop        
+
+# Kertolasku viidellä (s = %rdx = x*x, s+s+s+s+s)
+multiply_five:
+    irmovq $0, %rdx             # Alustetaan %rdx nollaan
+    addq %rbx, %rdx             # Lisäätään %rbx = x*x %rdx:ään viisi kertaa
+    addq %rbx, %rdx
+    addq %rbx, %rdx
+    addq %rbx, %rdx
+    addq %rbx, %rdx
+    ret
+
+# Kertolasku alustus
+multiply_init:
+    irmovq $0, %rbx             # Kertolaskun tulos
+    rrmovq %rcx, %rsi           
+    rrmovq %rcx, %rdx
+    irmovq $1, %rcx             # Bittimaski
+    irmovq $13, %r11            # Bittien määrä (4095 suurin mahdollinen luku x:lle)
+    irmovq $1, %r14             # Vähennys
+    jmp multiply_loop
+    
+multiply_loop: 
+    subq %r14, %r11             # Tarkista, onko käyty kaikki (13) bittiä
+    je end_multiply             # Kun yhtäsuuret, kertolasku laskettu
+    rrmovq %rcx, %r9
+    andq %rsi, %r9              # Tarkista, että bitti on 1
+    jne addition
+    call shift_left
+    jmp multiply_loop
+ 
+addition:
+    addq %rdx, %rbx             # Lisää rdx:n arvo tulokseen
+    call shift_left
+    jmp multiply_loop
+
+shift_left:
+    addq %rcx, %rcx             # Siirrä bitmaskia 1 <<= %rcx
+    addq %rdx, %rdx             # Siirrä rdx:ää 1 <<= %rdx
+    ret
+ 
+end_multiply:
+    ret                         # Palataan takaisin pääsilmukkaan
+
+#
+#Neliöjuuri
+#
+#   %r12 = num
+#   %rsi = bit
+#   %rcx = tulos
+# 
+square_root_init:
+    irmovq $4294967296, %rsi    # 2^32
+    irmovq $0, %rcx             # Alustetaan %rcx nollaan
+
+# while (bit > num) {
+#  bit >>= 2;
+# }
+
+first_loop:
+    subq %r12, %rsi
+    jle first_loop_done         # Kun num > bit ensimmäinen silmukka käyty
+    addq %r12, %rsi
+    call bit_shift_bit          # bit >>= 1
+    rrmovq %rdx, %rsi
+    call bit_shift_bit          # bit >>= 1
+    rrmovq %rdx, %rsi           # %rsi uusi arvo >>= 2
+    jmp first_loop
+
+first_loop_done:
+    addq %r12, %rsi
+
+#
+# while (bit != 0) {
+#    if (num >= res + bit) {
+#       num -= res + bit;
+#       res = (res >> 1) + bit;
+#    } else {
+#       res >>= 1;
+#    }
+#    bit >>= 2;
+# }
+#
+second_loop:
+    rrmovq %rsi, %r13
+    addq %rsi, %rsi     
+    je bit_zero                 # Kun bitti = 0, neliöjuuri laskettu 
+    subq %r13, %rsi
+    subq %rsi, %r12
+    subq %rcx, %r12    
+    jl num_smaller              # Jos num < res + bit hypätään else lauseeseen
+    call bit_shift_res          # res >>= 1
+    rrmovq %rdx, %rcx
+    addq %rsi, %rcx 
+    call bit_shift_bit          # bit >>= 1
+    rrmovq %rdx, %rsi
+    call bit_shift_bit          # bit >>= 1
+    rrmovq %rdx, %rsi
+    jmp second_loop
+
+# num < res + bit 
+num_smaller:
+    addq %rsi, %r12             
+    addq %rcx, %r12             
+    call bit_shift_res          # res >>= 1
+    rrmovq %rdx, %rcx
+    call bit_shift_bit          # bit >>= 1
+    rrmovq %rdx, %rsi
+    call bit_shift_bit          # bit >>= 1
+    rrmovq %rdx, %rsi
+    jmp second_loop
+
+#
+# Bittisiirron algoritmiin olen hyödyntänyt Stackoverflowsta löydettyä algoritmiä,
+# jonka on sivustolle jakanut Peter Corders. Olen implementoinut hänen koodinsa omaan 
+# työhöni vaihtamalla koodin sopivaksi assembly y86-64 ympäristöön.
+#
+# Linkki: https://stackoverflow.com/questions/55539625/how-to-perform-right-shift-in-y86-64-or-other-toy-isas-with-add-and-but-no-na
+#
+
+# Bittisiirto neliöjuuren tulokselle
+bit_shift_res:
+    irmovq $0, %rdx             # Tulos          
+    irmovq $1, %rdi
+    irmovq $63, %r11            # Iteraatioiden määrä, muutettu 31 -> 63
+ 
+rshift_res:
+    addq %rdx, %rdx             # %rdx <<= 1
+    andq %rcx, %rcx             # Ehtoliput %rcx perusteella; tarkistaa MSB 0 vai 1
+    jge MSB_zero_res            # Siirry, jos MSB on 0
+    xorq %rdi, %rdx             # Alin bitti 1:ksi
+    
+MSB_zero_res:
+    addq %rcx, %rcx             # %rsi <<= 1
+    subq %rdi, %r11             # Vähennä laskuria
+    jne rshift_res              # Palaa silmukkaan, jos ei ole käyty loppuun
+    ret
+
+# Bittisiirto bittiarvolle
+bit_shift_bit:
+    irmovq $0, %rdx             # Tulos          
+    irmovq $1, %rdi             # Bittimaski
+    irmovq $63, %r11            # Iteraatioiden määrä, muutettu 31 -> 63
+ 
+rshift_bit:
+    addq %rdx, %rdx             # %rdx <<= 1
+    andq %rsi, %rsi             # Ehtoliput %rcx perusteella; tarkistaa MSB 0 vai 1
+    jge MSB_zero_bit            # Siirry, jos MSB on 0
+    xorq %rdi, %rdx             # Alin bitti 1:ksi
+    
+MSB_zero_bit:
+    addq %rsi, %rsi             # %rsi <<= 1
+    subq %rdi, %r11             # Vähennä laskuria
+    jne rshift_bit              # Palaa silmukkaan, jos ei ole käyty loppuun
+    ret
+
+bit_zero:       
+    ret                         # Palataan takaisin pääsilmukkaan
+
+end: 
+    halt                        # Lopeta ohjelma
+ 
+.pos 0x400
+stack: 
+
+.pos 0x700
+array: 
